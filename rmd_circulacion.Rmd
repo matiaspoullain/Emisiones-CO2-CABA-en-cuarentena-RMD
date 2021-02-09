@@ -1,0 +1,602 @@
+---
+title: "Emisiones de gases de efecto invernadero en la Ciudad de Buenos Aires durante la restricción a la circulación, medida de control contra la propagación del COVID-19"
+author: "Lic. Matías Poullain^1^^,^^2^"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    theme: flatly
+subtitle: Relacionando COVID-19, tránsito y ambiente
+urlcolor: null
+runtime: shiny
+bibliography: bibliografia_circulacion.bib
+csl: abhandlungen-aus-dem-mathematischen-seminar-der-universitat-hamburg.csl
+---
+
+<style>
+.nav>li>a {
+    position: relative;
+    display: block;
+    padding: 10px 15px;
+    color: #258039;
+}
+
+ .nav-pills>li.active>a, .nav-pills>li.active>a:hover, .nav-pills>li.active>a:focus {
+    color: #ffffff;
+    background-color: #258039;
+}
+
+body {
+text-align: justify}
+</style>
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r Paquetes y datos, message=FALSE, warning=FALSE}
+library(lubridate)
+library(dplyr)
+library(kableExtra)
+library(ggplot2)
+library(ggthemes)
+library(dplyr)
+library(stringr)
+library(ggridges)
+library(RColorBrewer)
+library(extrafont)
+loadfonts(device = "win")
+library(scales)
+library(RColorBrewer)
+library(reshape2)
+library(tidyr)
+library(data.table)
+library(mgcv)
+library(pracma)
+library(treemapify)
+library(shiny)
+library(shinyWidgets)
+library(scales)
+library(forcats)
+library(ggpubr)
+library(sf)
+library(tmap)
+library(leaflet)
+
+
+paleta <- c("#258039", "#CF3721", "#F5BE41", "#31A9B8")
+paleta6 <- colorRampPalette(paleta)(6)
+paleta7 <- colorRampPalette(paleta)(7)
+color.principal <- paleta[1]
+
+flujo <- read.csv("dataset_flujo_vehicular (2).csv", encoding = "UTF-8")
+flujo <- flujo[!is.na(flujo$LATITUD) | !is.na(flujo$LONGITUD),]
+flujo <- flujo %>%
+  spread(SENTIDO, CANTIDAD) %>%
+  mutate(Interna = replace_na(Interna, 0),
+         Egreso = replace_na(Egreso, 0),
+         Ingreso = replace_na(Ingreso, 0),
+         HORA = parse_date_time(HORA, order ="dby:H:M:S"),
+         CANTIDAD = Interna + Egreso + Ingreso,
+         Dirección = case_when(X.U.FEFF.CODIGO_LOCACION == "48Q3CJ00+" ~ "Av. Libertador y Cerrito",
+                               X.U.FEFF.CODIGO_LOCACION == "48Q39G00+" ~ "Av. Juan Bautista Alberdi y Av. San Pedrito",
+                               X.U.FEFF.CODIGO_LOCACION == "48Q3CH00+" ~ "Av. Juan B. Justo y Charcas",
+                               X.U.FEFF.CODIGO_LOCACION == "48Q39J00+" ~ "Av. de Mayo y Bolívar",
+                               X.U.FEFF.CODIGO_LOCACION == "48Q3FG00+" ~ "Av. Gral. Paz y 3 de Febrero",
+                               X.U.FEFF.CODIGO_LOCACION == "48Q39H00+" ~ "Av. Independencia y 24 de Noviembre"))
+flujo$X <- NULL
+flujo <- flujo[flujo$HORA < as.Date("2020-11-06"),]
+
+#Busco si hay combinaciones de hora y Dirección que no aparecen:
+combinaciones <- expand.grid(unique(flujo$HORA), unique(flujo$Dirección))
+names(combinaciones) <- c("HORA", "Dirección")
+flujo <- merge(combinaciones, flujo, by = c("HORA", "Dirección"), all = TRUE)
+```
+<br>
+
+# Secciones {.tabset .tabset-fade .tabset-pills}
+
+## Introducción
+
+---
+
+### Introducción
+<br><br>
+A medida que el virus <span style="color:`r color.principal`">__SARS-CoV-2__</span> fue exparsiendose por el mundo, los diferentes gobiernos establecieron cuarentenas obligatorias y restricciones al movimiento dentro y entre ciudades. Estas estrategias de control son efectivas contra enfermedades infecciosas, especialmente contra aquellas de sintomatología tardía o escasa [@peak2017comparing], como lo es el <span style="color:`r color.principal`"> __COVID-19__</span>. El 11 de marzo del 2020, la Organización Mundial de la Salud (OMS) declara que el <span style="color:`r color.principal`"> __COVID-19__</span> puede caracterizarse como una pandemia y el 20 de marzo, se estableció el llamado "Aislamiento social, preventivo y obligatorio" para combatir la enfermedad" a fin de mitigar su propagación y su impacto en el sistema sanitario"[@PresidenciadelaNacionArgentina2020] en toda la República Argentina, sólo 17 días después de la confirmación del primer caso en el país y con un acumulado de 128 casos detectados.
+<br>
+Durante esta pandemia, numerosos trabajos describieron efectos secundarios de las cuarentenas prolongadas. Entre ellos, se observaron en diversas partes del mundo cambios en los niveles de contaminación atmosférica producto de las cuarentenas [@zhang2020associations; @chen2020air; @roman2020variation; @dutheil2020covid]. En la Ciudad Autónoma de Buenos Aires (CABA), la restricción de circulación finalizó el 6 de noviembre del 2020, con una duración de poco más de 7 meses. Se evidenció que la calidad del aire en la CABA aumentó durante la cuarentena [@bolano2020spread].
+<br>
+Las emisiones de gases de efecto invernadero en CABA en condiciones normales fueron estimados para el 2017 en 11,952,659 TnCO<sub>2</sub>eq, siendo el transporte responsable del 30% de las emisiones totales anuales de gases de efecto invernadero en CABA [@AgenciadeProteccionAmbientalAPrA2017], es interesante cuantificar la reducción de tales gases ocurrido durante la cuarentena obligatoria.
+<br>
+El objetivo de este trabajo es analizar el efecto de la cuarentena obligatoria dispuesta en CABA para combatir la transmisión comunitaria del virus <span style="color:`r color.principal`"> __SARS-CoV-2__ </span>sobre el flujo vehicular y la variación de los gases de infecto invernadero emitidos por el transporte carretero dentro de CABA.
+<br><br>
+
+---
+
+^1^: Centro Nacional de Diagnóstico e Investigación en Endoepidemiologías (CeNDIE), ANLIS Malbrán
+<br>
+^2^: Grupo de Bioestadística Aplicada (GBA), Facultad de Ciencias Exactas y Naturales, Universidad de Buenos Aires
+
+<br><br>
+
+## Materiales y métodos  {.tabset .tabset-fade .tabset-pills}
+
+---
+
+La cuantificación de la emisión de los gases de efecto invernadero anual se obtuvo del IGEI (Inventario de Gases de Efecto Invernadero) [@AgenciadeProteccionAmbientalAPrA2017] más reciente realizado en CABA  estimó que el 30% de las emisiones totales anuales de gases de efecto invernadero provino del transporte carretero, emitiendo 3,455,325 TnCO<sub>2</sub>eq/año. En este trabajo se consideró que la emisión se da de forma constante a lo largo del año.
+<br>
+Los datos del flujo vehicular fueron tomados de la base de datos pública del Gobierno de CABA [@SecretariadeInnovacionyTransformacionDigital.JefaturadeGabinetedeMinistros2020]. Se obtuvo un listado con el flujo vehicular detectado por seis sensores con información de la latitud y longitud del sensor, fecha, hora y cantidad de vehículos registrados en una hora. El Mapa 1 muestra la posición geográfica de los distintos sensores estudiados.
+<br>
+```{r Mapa}
+datos.mapa <- unique(flujo[complete.cases(flujo), c("Dirección", "LATITUD", "LONGITUD")])
+
+projcrs <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+datos.mapa <- st_as_sf(x = datos.mapa,                         
+               coords = c("LONGITUD", "LATITUD"),
+               crs = projcrs)
+
+ renderLeaflet({
+        tmap_leaflet(
+  tm_shape(datos.mapa) +
+  tm_dots(shape = 21, col = color.principal, size = 1, alpha = 0.7) +
+  tm_text("Dirección", ymod = -1, size = 1, fontfamily = "Arial", just = "center") +
+  tm_scale_bar(text.size = 0.3, color.dark = "grey", text.color = "grey", lwd = 0.5) + #escala
+  tm_compass(north = 180, text.color = "grey", color.dark = "grey", position = c( "right", "top"), text.size = 0.4, cardinal.directions = "S", lwd = 0.5) +
+    tm_basemap("OpenStreetMap"))
+})
+```
+__Mapa 1__
+<p style="color:`r color.principal`">*Ubicaiones de los sensores de flujo vehicular estudiados*</p>
+<br><br>
+Dado que existe influencia de las condiciones climáticas sobre el tráfico vehicular [@essien2018impact], se optó por agregar al modelo predictivo datos climáticos. Los utilizados en este trabajo son la temperatura, la humedad y una descripción de la condición climática ("Despejado", "Llovizna", "Lluvia", "Tormenta"). Estos datos fueron medidos por una estación meteorológica situada en el <span style="color:`r color.principal`"> __Aeropuerto Jorge Newberry__</span> y almacenados en la base de datos climáticos <span style="color:`r color.principal`"> __Wunderground__</span>, de donde fueron recolectados y presentan una resolución temporal de una hora durante todo el período de estudio.
+
+---
+
+### Análisis descriptivo
+<br>
+Se realizó un análisis descriptivo de los datos observados por cada sensor con una representación gráfica y una tabla con medidas resumen.
+<br>
+A fin de reducir la cantidad de datos a modelar, se sumaron los datos de circulación de los diferentes sensores en un único valor denominado "Circulación Total". No se pudo calcular la circulación total de las horas en las que faltaron registros de al menos un sensor. Se construyó una línea de tiempo con tales datos.
+<br>
+Con el objetivo de comprender las tendencias de circulación semanales y anuales observadas, se realizó una animación de la densidad del flujo vehicular en cada día del rango de tiempo estudiado, una animación de la línea de tiempo de un suavizado del flujo vehicular diario a lo largo del período de tiempo bajo estudio y una animación que presenta un suavizado de la circulación total diaria medida, dentro de cada semana en el período de estudio.
+<br>
+Se presenta una descripción gráfica de las variables climáticas utilizadas en la construcción del modelo predictivo. Estas variables son la temperatura, la humedad y una descripción de las condición climática.
+
+
+### Estimación de los gases de infecto invernadero no liberados a la atmósfera durante la cuarentena
+<br>
+
+#### Predicción de la circulación sin cuarentena
+<br>
+Se buscó estimar el flujo de vehículos registrados por los sensores durante el período de tiempo de cuarentena si esta no se hubiese establecido. Se hizo la suposición que la restricción del movimiento durante la cuarentena fue la única causante del descenso de circulación y que, por lo tanto, de no haber habido cuarentena, el flujo vehicular hubiese sido similar al de las últimas semanas previas al 20 de marzo del 2020. Además, se tomaron como variables explicativas de la circulación a la hora del día, el día de la semana y a variables climáticas tales como la temperatura y el tiempo en cada hora. Se ajustó un <span style="color:`r color.principal`"> __Modelo Aditivo Generalizado (GAM)__</span> con tales variables explicatorias.
+<br>
+Los resultados del modelo predictivo <span style="color:`r color.principal`"> __GAM__ </span>se presentan en una línea de tiempo del período de estudio junto con los valores observados.
+
+<br><br>
+
+#### Cuantificación de la reducción de la circulación y de la liberación de gases de efecto invernadero
+<br>
+Se calcularon las áreas debajo de la curvas de circulación esperada si no hubiese habido cuarentena y de la observada. Se determinó la proporción que representa esta última de la primera. También se calculó la fracción que representa el período de estudio sobre un año y se determinó la proporción de gases de efecto invernadero esperada en ese período. Por último se estimó la liberación de gases de efecto invernadero producida dada la proporción que representa la circulación observada de la esperada.
+<br>
+La comparación de las áreas debajo de las curvas se presentan en una línea de tiempo y en un gráfico comparativo de tamaños relativos.
+
+<br><br>
+
+## Resultados {.tabset .tabset-fade .tabset-pills}
+
+---
+
+### Análisis descriptivo
+<br>
+La restricción a la circulación duró 231 días totales. En este período de tiempo los sensores de circulación estudiados registraron casi 124 millones de vehículos circulando. Se observó un descenso abrupto de la circulación al comenzar la cuarentena continuado de un aumento paulatino en los meses siguientes hasta alcanzar un estancamiento con ciertas variaciones en la circulación, siendo menor a la circulación observada previo a la cuarentena (Figura 1). La tabla 1 presenta medidas resumen de los datos observados por sensor.
+<br>
+
+
+
+```{r figura 1, echo = FALSE, fig.width = 14, fig.height = 12}
+chooseSliderSkin(skin = "Flat") #c("Shiny", "Flat", "Modern", "Nice", "Simple", "HTML5", "Round", "Square")
+
+asb <- function(original, new) {
+  # original color
+  original_ <- unname(col2rgb(original)/255)
+  # original <- rgb_to_hsl(r = original[1, 1], g = original[2, 1], b = original[3, 1])
+  original <- rgb2hsv(r = original_[1, 1], g = original_[2, 1], b = original_[3, 1], maxColorValue = 1)[, 1]
+  original[1] <- original[1] * 360
+  original[3] <- sqrt( 0.299*original_[1, 1]^2 + 0.587*original_[2, 1]^2 + 0.114*original_[3, 1]^2 )
+
+  # target color
+  new_ <- unname(col2rgb(new)/255)
+  # new <- rgb_to_hsl(r = new[1, 1], g = new[2, 1], b = new[3, 1])
+  new <- rgb2hsv(r = new_[1, 1], g = new_[2, 1], b = new_[3, 1], maxColorValue = 1)[, 1]
+  new[1] <- new[1] * 360
+  new[3] <- sqrt( 0.299*new_[1, 1]^2 + 0.587*new_[2, 1]^2 + 0.114*new_[3, 1]^2 )
+
+  angle <- new[1] - original[1]
+  # angle <- round(angle, 2)
+  brightness <- (1 - (original[3] - new[3])) * 100
+  # brightness <- round(brightness, 2)
+  saturate <- (1 + (original[2] - new[2])) * 100
+  # saturate <- round(saturate, 2)
+  c(angle, saturate, brightness)
+}
+
+asb_ <- asb("#ed5565", color.principal)
+angle <- asb_[1]
+saturate <- asb_[2]
+brightness <- asb_[3]
+colImg <- paste0(".irs-bar-edge, .irs-bar, .irs-single:after, .irs-from:after, .irs-to:after, .irs-slider", " {", "-webkit-filter: hue-rotate(", angle, "deg) saturate(", saturate, "%) brightness(", brightness, "%); ", "filter: hue-rotate(", angle, "deg) saturate(", saturate, "%) brightness(", brightness, "%);", "}")
+tags$style(colImg, sprintf(".irs-single, .irs-from, .irs-to {background: %s;}", color.principal))
+
+
+sliderTextInput(inputId = "fechas", label = "Seleccionar intervalo de fechas", choices = unique(as.Date(flujo$HORA)), selected = c(min(as.Date(flujo$HORA)), max(as.Date(flujo$HORA))), width = "400%")
+
+
+renderPlot({
+  flujo %>%
+    filter(between(HORA, input$fechas[1], input$fechas[2])) %>%
+    ggplot(aes(x = HORA, y = CANTIDAD, col = Dirección)) +
+  geom_point(alpha = 0.5) + 
+  geom_line(alpha = 0.3) +
+  scale_color_manual(values=paleta6) +
+  theme_classic() +
+  theme(legend.position = "top",
+        text = element_text(family = "Arial", size = 20),
+        legend.title = element_blank()) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 20000, 5000), labels = comma, limits = c(0, 20000)) +
+  ylab("Flujo vehicular registrado") +
+  xlab("Fecha") +
+  geom_vline(xintercept = as.POSIXct(as.Date("2020-03-20")), linetype="dashed")
+})
+```
+__Figura 1__
+<p style="color:`r color.principal`">*Valores de circulación observados en el período de estudio por sensor*</p>
+<br><br>
+__Tabla 1__
+<p style="color:`r color.principal`">*Medidas resumen de la base de datos agrupadas por sensor*</p>
+```{r tabla 1, echo = FALSE}
+flujo %>%
+  group_by(Dirección) %>%
+  summarise("Primer registro" = paste(as.character(min(HORA)), "00:00:00"),
+            "Último registro" = max(HORA),
+            "Número de registros" = n(),
+            "Flujo mínimo registrado" = min(CANTIDAD, na.rm = TRUE),
+            "Flujo máximo registrado" = max(CANTIDAD, na.rm = TRUE))%>% 
+  kable(align = "lcccc") %>%
+  kable_styling(c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, position = "left",
+                fixed_thead = T, font_size = 20) %>%
+  column_spec(1, width = "4cm") %>% 
+  column_spec(2, width = "2cm") %>% 
+  column_spec(3, width = "2cm") %>% 
+  column_spec(4, width = "2cm") %>%
+  column_spec(5, width = "2cm") %>% 
+  column_spec(6, width = "2cm") %>%
+  row_spec(0, bold = T, color = "white", background = paleta[1])
+```
+<br>
+La circulación total agrupa los datos de todos los sensores estudiados. Su variación a lo largo del tiempo se presenta en la Figura 2, donde se observan variaciones similares a la Figura 1. Por otro lado, se puede observar una variación de la circulación diaria que se repite a lo largo del período de estudio, donde la mayor circulación se observa entre las 8 y las 18hs mientras que las horas de la madrugada presentan la menor cantidad de circulación (Figura 3a). Por último, y de forma similar, la variación intrasemanal se presenta con una tendencia constante, en la cual, los días de semana tienen mayor circulación que los fines de semana, siendo los viernes los días de mayor circulación total y los domingos los de menos (Figura 3c)
+<br>
+```{r creacion base circulacion total, echo = FALSE}
+#Dia y hora:
+xdiaxhora <- flujo %>%
+  mutate(Fecha = as.Date(HORA)) %>%
+  group_by(HORA) %>%
+  summarize(Circulacion = sum(CANTIDAD))%>%
+  mutate(condicion = case_when(HORA < as.Date("2020-03-20") ~ "Libre circulacion",
+                               HORA >= as.Date("2020-03-20") ~ "Circulación restringida"),
+         dia.semana = factor(str_to_title(weekdays(HORA)), levels = c("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")),
+         dia.semana.num = as.numeric(dia.semana),
+         hora.num = as.numeric(HORA),
+         hora.num = hora.num - min(hora.num) + 1,
+         semana = week(HORA) - min(week(HORA)) + 1,
+         horario = as.numeric(substr(as.character(HORA), 12, 13)))
+
+#Hay un outlier claro:
+xdiaxhora[xdiaxhora$Circulacion == max(xdiaxhora$Circulacion, na.rm = TRUE) & !is.na(xdiaxhora$Circulacion),"Circulacion"] <- NA
+
+#Joineo las variables climáticas:
+variables.climaticas <- read.csv("Variables climaticas desde 2019.csv")
+variables.climaticas <- variables.climaticas %>%
+  mutate(HORA = ymd_hms(HORA),
+         ClimaCondiciones = as.factor(ClimaCondiciones))
+
+variables.climaticas <- data.table(variables.climaticas)
+xdiaxhora <- data.table(xdiaxhora)
+
+setkey(xdiaxhora, HORA )
+setkey(variables.climaticas, HORA )
+
+xdiaxhora <- variables.climaticas[xdiaxhora, roll = "nearest" ]
+
+#Saco outliers
+mintemp <- which(xdiaxhora$TemperaturaC == min(xdiaxhora$TemperaturaC))
+xdiaxhora[xdiaxhora$TemperaturaC == min(xdiaxhora$TemperaturaC), "TemperaturaC"] <- mean(c(as.numeric(xdiaxhora[mintemp + 1, "TemperaturaC"]), as.numeric(xdiaxhora[mintemp - 1, "TemperaturaC"])))
+
+minhum <- which(xdiaxhora$Humedad == min(xdiaxhora$Humedad))
+xdiaxhora[xdiaxhora$Humedad == min(xdiaxhora$Humedad), "Humedad"] <- mean(c(as.numeric(xdiaxhora[minhum + 1, "Humedad"]), as.numeric(xdiaxhora[minhum - 1, "Humedad"])))
+
+xdiaxhora$ClimaCondiciones <- factor(xdiaxhora$ClimaCondiciones, levels = (c("Despejado", "Nublado", "Llovizna", "Lluvia", "Tormenta")))
+
+```
+<br>
+
+```{r figura 2, echo = FALSE, fig.width = 14, fig.height = 12}
+sliderTextInput(inputId = "fechas2", label = "Seleccionar intervalo de fechas", choices = unique(as.Date(xdiaxhora$HORA)), selected = c(min(as.Date(xdiaxhora$HORA)), max(as.Date(xdiaxhora$HORA))), width = "400%")
+
+renderPlot({
+  xdiaxhora %>%
+    filter(between(HORA, input$fechas2[1], input$fechas2[2])) %>%
+    ggplot(aes(x = HORA, y = Circulacion)) +
+  geom_line() +
+  geom_point(aes(col = dia.semana), alpha = 0.5) +
+  scale_color_manual(values=paleta7) +
+    scale_y_continuous(expand = c(0, 0), labels = comma) +
+  theme_classic() +
+  theme(legend.position = "top",
+        text = element_text(family = "Arial", size = 20),
+        legend.title = element_blank()) +
+  ylab("Circulación total") +
+  xlab("Fecha") +
+  geom_vline(xintercept = as.POSIXct(as.Date("2020-03-20")), linetype="dashed")
+})
+```
+__Figura 2__
+<p style="color:`r color.principal`">*Circulación total observada*</p>
+<br><br>
+
+<center>
+![](Animaciones/Video_completo.gif)
+</center>
+__Figura 3__
+<p style="color:`r color.principal`">*a) Animación de la densidad del flujo vehicular en cada día del rango de tiempo estudiado. b) Animación de la línea de tiempo de un suavizado del flujo vehicular diario a lo largo del período de tiempo bajo estudio. c) Animación de la circculación diaria en cada semana del período de estudio*</p>
+<br><br>
+
+
+En cuanto a las variables climáticas observadas, la temperatura presenta un patrón de descenso a la noche y una tendencia general de bajas temperaturas en los meses invernales. Por otro lado, la humedad muestra un patrón diferente, esta aumenta a la noche y desciende durante el día y presenta tendencias de crecimiento y descenso de períodos de largo variable (entre 2 y 10 días). En última instancia, se observó que más del 60% del período de estudio presentó un tiempo despejado y de escasas lluvias y tormentas (Figura 5).
+
+<br>
+
+```{r figura nose, echo = FALSE, fig.width = 14, fig.height = 12}
+sliderTextInput(inputId = "fechasclim", label = "Seleccionar intervalo de fechas", choices = unique(as.Date(xdiaxhora$HORA)), selected = c(min(as.Date(xdiaxhora$HORA)), max(as.Date(xdiaxhora$HORA))), width = "400%")
+
+renderPlot({
+  temp <- xdiaxhora %>%
+    filter(between(HORA, input$fechasclim[1], input$fechasclim[2])) %>%
+    ggplot(aes(x = HORA, y = TemperaturaC)) +
+    geom_line(col = paleta[3]) +
+    scale_color_manual(values=paleta) +
+    scale_y_continuous(expand = c(0, 0), labels = comma) +
+    theme_classic() +
+    theme(legend.position = "top",
+          text = element_text(family = "Arial", size = 20),
+          legend.title = element_blank()) +
+    ylab("Temperatura (C°)") +
+    xlab("Fecha")
+  
+  
+  
+  hum <- xdiaxhora %>%
+    filter(between(HORA, input$fechasclim[1], input$fechasclim[2])) %>%
+    ggplot(aes(x = HORA, y = Humedad / 100)) +
+    geom_line(col = paleta[4]) +
+    scale_y_continuous(expand = c(0, 0), labels = scales::percent) +
+    theme_classic() +
+    theme(legend.position = "top",
+          text = element_text(family = "Arial", size = 20),
+          legend.title = element_blank()) +
+    ylab("Humedad") +
+    xlab("Fecha")
+  
+  
+  clim <- xdiaxhora %>%
+    filter(between(HORA, input$fechasclim[1], input$fechasclim[2])) %>%
+    ggplot(aes(x = ClimaCondiciones)) +
+    geom_bar(aes(y = ..prop.., group = 1), fill = paleta[1]) +
+    scale_y_continuous(expand = c(0, 0), labels = scales::percent) +
+    theme_classic() +
+    theme(legend.position = "top",
+          text = element_text(family = "Arial", size = 20),
+          legend.title = element_blank()) +
+    ylab("Frecuencias relativas") +
+    xlab("Tiempo")
+  
+  
+  ggarrange(ggarrange(temp, hum, nrow = 2, labels = c("a)", "b)"), label.x = 1), clim, ncol = 2, labels = c("", "c)"), label.x = 1)
+})
+```
+__Figura 5__
+<p style="color:`r color.principal`">*Resumen gráfico de las variables climáticas: a) Variación de la temperatura a lo largo del período de estudio, b) Variación de la humedad a lo largo del período de estudio, c) Frecuencia relativa de las diferentes condiciones climáticas observadas a lo largo del período de estudio*</p>
+
+### Estimación de los gases de infecto invernadero no liberados a la atmósfera durante la cuarentena
+<br>
+
+#### Predicción de la circulación sin cuarentena
+<br>
+
+```{r creacion bases para modelar}
+xdiaxhora.sin.na <- xdiaxhora[!is.na(xdiaxhora$Circulacion),]
+
+previo.cuarentena <- xdiaxhora.sin.na[xdiaxhora.sin.na$condicion == "Libre circulacion",]
+```
+
+
+
+```{r Modelo GAM}
+modelo <- gam(Circulacion ~ Humedad + TemperaturaC + ClimaCondiciones + te(dia.semana.num, horario, bs = c("ps", "cc"), k = c(6, 8)), data = previo.cuarentena, family = "quasipoisson")
+
+s <- summary(modelo)
+```
+
+El ajuste al modelo <span style="color:`r color.principal`"> __GAM__</span> presentó un R^2^ de `r round(s$r.sq, 3)` Se observó que los valores predichos son siempre mayores a los observados durante el período de restricción a la circulación además de mantener las tendencias diarias y semanales esperadas (Figura 6).
+
+<br>
+
+```{r Predichos GAM, fig.width = 14, fig.height = 12}
+xdiaxhora$pred <- as.numeric(predict(modelo, type = "response", newdata = xdiaxhora))
+
+
+sliderTextInput(inputId = "fechasgam", label = "Seleccionar intervalo de fechas", choices = unique(as.Date(xdiaxhora$HORA)), selected = c(min(as.Date(xdiaxhora$HORA)), max(as.Date(xdiaxhora$HORA))), width = "400%")
+
+renderPlot({
+  xdiaxhora %>%
+    filter(between(HORA, input$fechasgam[1], input$fechasgam[2])) %>%
+    ggplot(aes(x = HORA)) +
+    geom_line(aes(y = pred))+
+    geom_point(aes(y = Circulacion, col = dia.semana), alpha = 0.3) +
+  scale_color_manual(values=paleta7) +
+    scale_y_continuous(expand = c(0, 0), labels = comma) +
+  theme_classic() +
+  theme(legend.position = "top",
+        text = element_text(family = "Arial", size = 20),
+        legend.title = element_blank()) +
+  ylab("Circulación total") +
+  xlab("Fecha")
+})
+```
+__Figura 6__
+<p style="color:`r color.principal`">*Comparación de los predichos de la circulación total por el modelo GAM con los datos observados. Los datos previos al inicio de la restricción del movimiento (20/03/2020) fueron utilizados para el entrenamiento del modelo*</p>
+<br><br>
+
+#### Cuantificación de la reducción de la circulación y de la liberación de gases de efecto invernadero
+<br>
+
+```{r Estimaciones de emisión y reducción de gases de efecto invernadero}
+circulacion.restringida <- xdiaxhora[xdiaxhora$condicion == "Circulación restringida",]
+circulacion.restringida[is.na(circulacion.restringida$Circulacion), "pred"] <- NA
+
+AUC.observado <- trapz(circulacion.restringida[!is.na(circulacion.restringida$Circulacion),]$hora.num, circulacion.restringida[!is.na(circulacion.restringida$Circulacion),]$Circulacion)
+
+AUC.esperado <- trapz(circulacion.restringida[!is.na(circulacion.restringida$pred),]$hora.num, circulacion.restringida[!is.na(circulacion.restringida$pred),]$pred)
+
+prop.circulacion.observada <- AUC.observado / AUC.esperado
+
+#Toneladas de CO2 eq emitidas en el 2017:
+#https://www.buenosaires.gob.ar/sites/gcaba/files/informe_inventario_gei_caba_2017.pdf
+co2.2017 <- 3455325 #toneladas de c02 equivalentes
+
+
+seg.ano <- as.numeric(as.POSIXct("2021-01-01 00:00:00", format="%Y-%m-%d %H:%M:%S")) - as.numeric(as.POSIXct("2020-01-01 00:00:00", format="%Y-%m-%d %H:%M:%S"))
+
+seg.obs <- max(circulacion.restringida$hora.num) - min(circulacion.restringida$hora.num) #segundos entre el inicio de la restricción de circulación hasta su levantameniento
+
+prop.ano <- seg.obs/seg.ano
+
+co2.normal <- co2.2017 * prop.ano #suponiendo que en el año se emite de forma constante co2 a misma velocidad, calculo cuanto se emitio en el período de tiempo observado
+
+co2.estimada <- co2.normal * prop.circulacion.observada #suponiendo que la reduccion de la circulacion observada en los puntos de muestreo representa lo que ocurre en toda la ciudad, calculo cuanto se emitio de co2 en toda la ciudad
+
+co2.ahorrado <- co2.normal - co2.estimada
+
+df <- data.frame(1, co2.normal, co2.estimada)
+
+df <- reshape2::melt(df, id.vars = "X1", variable.name = "co2")
+
+etiqueta <- c("CO2 liberado en circulación normal","CO2 liberado en circulación restringida")
+
+df <- data.frame(df, etiqueta)
+
+df$porcentaje <- paste(round(100 * df$value / df$value[1], 1), "%", sep = "")
+
+
+#Bosque:
+absorbe <- 1.25 #kgCO2/m2/yr https://onepetro.org/CMTCONF/proceedings-abstract/12CMTC/All-12CMTC/CMTC-151122-MS/587
+absorbe <- 1.25 * 1000000 * prop.ano / 1000 #Tn CO2/km2 en el periodo de estudio
+sup.caba <- 203 #km2
+absorbe <- absorbe * sup.caba #CO2/yr en una superficie igual a la de CABA
+eq.bosque <- co2.ahorrado / absorbe
+
+```
+<br>
+Se calculó que el período de estudio equivale a un `r round(100 * prop.ano, 1)`% del año 2020 y que, suponiendo que la liberación de gases de efecto invernadero es constante a lo largo del año y que de no haberse instaurado la restricción a la circulación, la producción de gases de efecto invernadero sería similar a la del año 2017, se estimó que la liberación de tales gases en el período de estudio fue de `r formatC(round(co2.normal, -3), format = "d", big.mark = ",")` TnCO<sub>2</sub>eq. Siendo que se calculó que la circulación, y por lo tanto la liberación de gases de efecto invernadero, se redujeron un `r round(100 * prop.circulacion.observada, 1)`% (Figuras 7 y 8), se estimó que en el período de estudio se liberaron al ambiente `r formatC(round(co2.estimada, -3), format = "d", big.mark = ",")` TnCO<sub>2</sub>eq, `r formatC(round(co2.ahorrado, -3), format = "d", big.mark = ",")` TnCO<sub>2</sub>eq menos de lo esperado de haber tenido circulación normal.
+<br>
+
+```{r figura emisiones, fig.width = 14, fig.height = 12}
+sliderTextInput(inputId = "fechasrestringida", label = "Seleccionar intervalo de fechas", choices = unique(as.Date(circulacion.restringida$HORA)), selected = c(min(as.Date(circulacion.restringida$HORA)), max(as.Date(circulacion.restringida$HORA))), width = "400%")
+
+renderPlot({
+  circulacion.restringida %>%
+  gather(Circulación, n.vehiculos, c(Circulacion, pred), factor_key = TRUE) %>%
+    filter(between(HORA, input$fechasrestringida[1], input$fechasrestringida[2])) %>%
+    mutate(Circulación = case_when(Circulación == "Circulacion" ~ "Circulación observada",
+                                   Circulación == "pred" ~ "Circulación predicha"),
+           Circulación = fct_relevel(Circulación, c("Circulación predicha", "Circulación observada"))) %>%
+    ggplot(aes(x = HORA, y = n.vehiculos,  ymax = n.vehiculos, fill = Circulación, col = Circulación, group = Circulación), alpha = 0.3) +
+    geom_line() +
+    geom_ribbon(ymin = 0, colour = NA) +
+    scale_color_manual(values = c(paleta[2], paleta[1])) +
+    scale_fill_manual(values = c(paleta[2], paleta[1])) +
+    scale_y_continuous(expand = c(0, 0), labels = comma) +
+    theme_classic() +
+    theme(legend.position = "top",
+        text = element_text(family = "Arial", size = 20),
+        legend.title = element_blank()) +
+    ylab("Circulación total") +
+    xlab("Fecha")
+})
+```
+__Figura 7__
+<p style="color:`r color.principal`">*Superposición de las áreas debajo de las curvas de circulación total esperada y observada*</p>
+<br>
+
+```{r treemap emisiones, fig.width = 10, fig.height = 5}
+ggplot(df, aes(area = value, label = etiqueta, fill = etiqueta, subgroup = porcentaje)) +
+            geom_treemap() +
+            geom_treemap_text(colour = "white", place = "topleft", reflow = FALSE, grow = TRUE)+
+            theme_classic() +
+            labs(fill = "") +
+  scale_fill_manual(values = c(paleta[2], paleta[1])) +
+  theme(legend.position = "none",
+        text = element_text(family = "Arial"),
+        legend.title = element_blank()) +
+  geom_treemap_subgroup_text(place = "bottom", grow = TRUE, alpha = 0.5, colour =
+                                           "black", fontface = "italic", min.size = 0) +
+  geom_treemap_subgroup_border(color = "black")
+
+
+```
+__Figura 8__
+<p style="color:`r color.principal`">*Gráfico comparativo entre los tamaños relativos de la emisión de gases de efecto invernadero observados de los esperados si la circulación no hubiese sido restringida*</p>
+<br><br>
+
+## Discusión
+
+---
+
+Los datos de circulación recolectados automáticamente y de acceso libre demostraron ser de suma importancia para profundizar conocimientoS sobre la circulación vehicular en una ciudad grande como lo es CABA. Estos datos no solo permiten obtener una idea más clara de cómo circulan los vehículos en CABA a fin de mejorar la calidad de vida de sus habitantes, sino que también pueden ser relacionados con otras problemáticas, como en este trabajo fue la ambiental. Si bien la reducción de la circulación dada por su restricción fue un hecho observable a simple vista, en este trabajo se pudo cuantificar que la circulación se redujo en un `r round(100 * prop.circulacion.observada, 0)`% promedio evitando que se libere al ambiente `r formatC(round(co2.ahorrado, -3), format = "d", big.mark = ",")` TnCO<sub>2</sub>eq, el equivalente al CO<sub>2</sub> absorbido por un bosque promedio [@thakur2012radiative] de `r round(eq.bosque, 1)` veces el tamaño de CABA en el mismo período de tiempo.
+
+<br>
+
+Una limitación de este estudio es el reducido número de observaciones previas a la cuarentena. Si bien sólo fueron 17 días, se pudo determinar las tendencias semanales y diarias que, solas, explican más del 90% de la variación observada. Aún así, mayor cantidad de datos se hubiese traducido en un modelo más robusto. Idealmente con los datos de circulación de los mismos sensores de todo el año 2019, se hubiese podido comprender la variación intra-anual de la circulación en un ambiente sin restricción a la circulación.
+
+<br>
+
+Otra limitación de este estudio es que no se pudo obtener la información de las precipitaciones durante el período de estudio con la resolución temporal con la que se trabajó. Siendo que otros estudios describieron un descenso del tráfico vehicular en los días de lluvia [@angel2014effects; @Keay2005] Aunque sí se pudo obtener la temperatura, la humedad y una descripción del clima observado.
+
+<br><br>
+
+## Conclusión
+
+---
+
+
+<br>
+La cuarentena obligatoria establecida establecida el 20 de marzo del 2020 en CABA logró ralentizar el contagio del virus <span style="color:`r color.principal`"> __SARS-CoV-2__</span> en la población, "aplanando la curva de contagios" y evitando el colapso sanitario. Además de este efecto, la cuarentena prolongada y la restricción a la circulación influyeron en muchos aspectos cotidianos de los habitantes, uno de ellos siendo la reducción de la circulación vehicular y, a su vez, la menor emisión de gases de efecto invernadero al ambiente. Este trabajo planteó un enfoque predictivo innovador basado en datos públicos y de libre acceso que permitió cuantificar tal reducción.
+
+<br>
+
+Si bien en este trabajo solo se analizo CABA, la metodología utilizada no está restringida a la Ciudad. De poder acceder a bases de datos similares de otras áreas y/o ciudades, sería de interés repetir la metodología a fin de comparar los efectos de la restricción al movimiento en distintas zonas.
+
+<br>
+
+Dado que el aumento del movimiento poblacional está relacionado al aumento de casos de <span style="color:`r color.principal`"> __COVID-19__</span>, los datos de circulación utilizados en este trabajo podrían ser utilizados para la prevención de nuevos contagios de <span style="color:`r color.principal`"> __COVID-19__</span>. Esto permitiría resaltar horarios y días de la semana claves a fin de dirigir las estrategias de control y generar un manejo inteligente de la pandemia, reduciendo los efectos no deseados de la implementación de medidas.
+
+
+<br><br>
+
+## Bibliografía
+
+---
+
